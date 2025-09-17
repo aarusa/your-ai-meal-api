@@ -4,7 +4,9 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "seed:products": "node src/scripts/seedProducts.js",
+    "seed:products:count": "node src/scripts/seedProducts.js"
   },
   "type": "module",
   "keywords": [],

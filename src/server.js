@@ -2,6 +2,8 @@ import express from "express"
 import cors from "cors";
 import userRoutes from "./routes/userRoutes.js"
 import chatRoutes from "./routes/chatRoutes.js"
+import productsRoutes from "./routes/productsRoutes.js"
+import pantryRoutes from "./routes/pantryRoutes.js"
 // import rateLimiter from "./middleware/rateLimiter.js";
 
 const app = express()
@@ -26,6 +28,8 @@ app.use(express.json()); // to parse the request body
 
 app.use("/api/users", userRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api/products", productsRoutes);
+app.use("/api/pantry", pantryRoutes);
 
 // app.listen(3000, () => {
 //     console.log("Server started on PORT: 3000");
