@@ -27,6 +27,15 @@ app.use(express.json()); // to parse the request body
 app.use("/api/users", userRoutes);
 app.use("/api/chat", chatRoutes);
 
-app.listen(3000, () => {
-    console.log("Server started on PORT: 3000");
+// app.listen(3000, () => {
+//     console.log("Server started on PORT: 3000");
+// });
+
+// const PORT = process.env.PORT || 3000; // use Render's PORT
+
+
+const PORT = process.env.PORT; // use Render's PORT
+app.listen(PORT, () => {
+  console.log(`Server started on PORT: ${PORT}`);
 });
+
