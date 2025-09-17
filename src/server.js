@@ -3,6 +3,7 @@ import cors from "cors";
 import userRoutes from "./routes/userRoutes.js"
 import chatRoutes from "./routes/chatRoutes.js"
 import productsRoutes from "./routes/productsRoutes.js"
+import aiRecipesRoutes from "./routes/aiRecipesRoutes.js"
 import pantryRoutes from "./routes/pantryRoutes.js"
 // import rateLimiter from "./middleware/rateLimiter.js";
 
@@ -29,6 +30,7 @@ app.use(express.json()); // to parse the request body
 app.use("/api/users", userRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/products", productsRoutes);
+app.use("/api/ai", aiRecipesRoutes);
 app.use("/api/pantry", pantryRoutes);
 
 // app.listen(3000, () => {
