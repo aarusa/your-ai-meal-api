@@ -1,5 +1,5 @@
 import express from "express";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+// Switched to OpenRouter (DeepSeek) for AI generation
 import supabase from "../database/supabaseClient.js";
 import { storeGeneratedMeal } from "../controllers/mealsController.js";
 
@@ -39,39 +39,72 @@ async function fetchUserPreferences(userId) {
   };
 }
 
+// Helper: call OpenRouter (DeepSeek) chat completions
+async function generateWithOpenRouter(prompt, temperature = 0.5, maxTokens = 1200) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY not configured");
+
+  const envModel = process.env.OPENROUTER_MODEL;
+  const candidates = [
+    envModel,
+    "deepseek/deepseek-chat",
+    "deepseek/deepseek-r1:free",
+    "deepseek/deepseek-coder:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+  ].filter(Boolean);
+
+  let lastErr = null;
+  for (const model of candidates) {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.OPENROUTER_HTTP_REFERRER || "http://localhost:3000/",
+        "X-Title": process.env.OPENROUTER_APP_TITLE || "YAM AI",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature,
+        max_tokens: maxTokens,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      lastErr = new Error(`OpenRouter error ${res.status} for model ${model}: ${errText}`);
+      // Try next candidate on model errors
+      if (res.status === 404 || res.status === 400) continue;
+      throw lastErr;
+    }
+    const data = await res.json();
+    const content = data?.choices?.[0]?.message?.content || "";
+    if (content) return content;
+  }
+  throw lastErr || new Error("OpenRouter: no content returned from candidates");
+}
+
 // POST /api/ai/recipes
 // Body: { userId?: string, ingredients: Array<{ id: string, name?: string }>, servings?: number }
 router.post("/recipes", async (req, res) => {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "GEMINI_API_KEY not configured" });
-    }
-
-    const { userId, ingredients = [], servings = 2 } = req.body || {};
-    if (!Array.isArray(ingredients)) {
-      return res.status(400).json({ error: "ingredients must be an array" });
+    const { userId, ingredients, servings = 2 } = req.body || {};
+    if (!Array.isArray(ingredients) || ingredients.length === 0) {
+      return res.status(400).json({ error: "ingredients array required" });
     }
 
     const preferences = await fetchUserPreferences(userId);
 
-    const ingredientList = ingredients.length > 0 
-      ? ingredients.map((i) => (i.name ? `${i.name} (${i.id})` : i.id)).join(", ")
-      : "No specific ingredients provided - create recipes based on preferences";
+    const ingredientList = ingredients
+      .map((i) => (i.name ? `${i.name} (${i.id})` : i.id))
+      .join(", ");
 
     const preferenceText = `Dietary: ${preferences.dietary.join(", ") || "none"}; Allergies: ${
       preferences.allergies.join(", ") || "none"
     }; Favorite cuisines: ${preferences.cuisines.join(", ") || "none"}`;
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
-      generationConfig: { temperature: 0.5, maxOutputTokens: 1200 },
-    });
-
-    const prompt = `You are an expert recipe generator. Create 3 recipe options ${ingredients.length > 0 
-      ? 'that can be made primarily with the provided pantry ingredients' 
-      : 'based on the user\'s dietary preferences and favorite cuisines'}. Strictly avoid any allergies and adhere to dietary preferences. Prefer favorite cuisines. 
+    const prompt = `You are an expert recipe generator. Create 3 recipe options that can be made primarily with the provided pantry ingredients. Strictly avoid any allergies and adhere to dietary preferences. Prefer favorite cuisines. 
 
 IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blocks, no explanations:
 
@@ -97,9 +130,8 @@ IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blo
 }
 
 Requirements:
-${ingredients.length > 0 
-  ? '- Use productId values using the provided ingredient ids when possible.\n- If a minor staple is required (salt, oil), include but keep minimal.'
-  : '- Create recipes using common, accessible ingredients that fit the dietary preferences.\n- Focus on the preferred cuisines and dietary restrictions.'}
+- Use productId values using the provided ingredient ids when possible.
+- If a minor staple is required (salt, oil), include but keep minimal.
 - Keep servings at ${servings} by default.
 - Ensure all ingredients and steps are realistic and consistent.
 - Return ONLY the JSON object, nothing else.
@@ -107,9 +139,7 @@ ${ingredients.length > 0
 Input ingredients: ${ingredientList}
 User preferences: ${preferenceText}`; 
 
-    const aiResult = await model.generateContent(prompt);
-    const aiResponse = await aiResult.response;
-    const text = aiResponse.text();
+    const text = await generateWithOpenRouter(prompt, 0.5, 1200);
 
     // Try to parse JSON from response - handle markdown code blocks
     let jsonString = text;
@@ -176,6 +206,166 @@ User preferences: ${preferenceText}`;
       stored: storedMeals.length > 0 
     });
   } catch (err) {
+    return res.status(500).json({ error: "SERVER_ERROR", detail: String(err) });
+  }
+});
+
+// POST /api/ai/plan
+// Generates meals for the Plan page. Does NOT store to DB. Ingredients are optional.
+// Body: { userId?: string, ingredients?: string[], dietaryPreferences?: string[], allergies?: string[], favoriteCuisines?: string[], calories?: number, protein?: number, mealType?: string, cookTime?: number, servings?: number }
+router.post("/plan", async (req, res) => {
+  try {
+    const {
+      userId,
+      ingredients = [],
+      dietaryPreferences = [],
+      allergies = [],
+      favoriteCuisines = [],
+      calories,
+      protein,
+      mealType,
+      cookTime,
+      servings = 2,
+    } = req.body || {};
+
+    // Merge with stored user preferences if userId is provided
+    const userPrefs = await fetchUserPreferences(userId);
+    const allDietary = Array.from(new Set([...(dietaryPreferences || []), ...(userPrefs.dietary || [])]));
+    const allAllergies = Array.from(new Set([...(allergies || []), ...(userPrefs.allergies || [])]));
+    const allCuisines = Array.from(new Set([...(favoriteCuisines || []), ...(userPrefs.cuisines || [])]));
+
+    const ingredientList = (ingredients || []).join(", ") || "none provided";
+    const preferenceText = `Dietary: ${allDietary.join(", ") || "none"}; Allergies: ${allAllergies.join(", ") || "none"}; Favorite cuisines: ${allCuisines.join(", ") || "none"}`;
+    const constraints = [
+      mealType ? `Meal type: ${mealType}` : null,
+      typeof calories === 'number' ? `Target calories per serving: ${calories}` : null,
+      typeof protein === 'number' ? `Target protein per serving: ${protein}g` : null,
+      typeof cookTime === 'number' ? `Max cook time: ${cookTime} minutes` : null,
+      servings ? `Servings: ${servings}` : null,
+    ].filter(Boolean).join("; ");
+
+    const prompt = `You are an expert recipe generator. Create 3 realistic, consistent recipe options that satisfy the user's constraints and preferences. If pantry ingredients are provided, prioritize using them but you may include common staples as needed.
+
+IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blocks, no explanations:
+
+{
+  "recipes": [
+    {
+      "id": "recipe-1",
+      "name": "Recipe Name",
+      "description": "Brief description",
+      "category": "Breakfast/Lunch/Dinner/Snack",
+      "prepTime": 10,
+      "cookTime": 20,
+      "servings": ${servings},
+      "difficulty": "Easy",
+      "ingredients": [
+        {"productId": "ingredient-id-or-name", "amount": 1, "unit": "cup"}
+      ],
+      "instructions": ["Step 1", "Step 2"],
+      "nutrition": {"calories": 300, "protein": 20, "carbs": 30, "fat": 10},
+      "tags": ["healthy", "quick"]
+    }
+  ]
+}
+
+Requirements:
+- Avoid any allergens. Respect dietary preferences. Prefer favorite cuisines.
+- Use provided pantry ingredients when relevant; otherwise propose sensible alternatives.
+- Keep servings at ${servings}. ${constraints}
+- Ensure ingredients and steps are realistic and consistent.
+- Return ONLY the JSON object, nothing else.
+
+Input pantry ingredients (optional): ${ingredientList}
+User preferences: ${preferenceText}`;
+
+    const text = await generateWithOpenRouter(prompt, 0.5, 1200);
+
+    // Parse JSON from response
+    let jsonString = text;
+    if (text.includes('```json')) {
+      const m = text.match(/```json\s*([\s\S]*?)\s*```/);
+      if (m) jsonString = m[1].trim();
+    } else if (text.includes('```')) {
+      const m = text.match(/```\s*([\s\S]*?)\s*```/);
+      if (m) jsonString = m[1].trim();
+    } else {
+      const m = text.match(/\{[\s\S]*\}/);
+      if (m) jsonString = m[0];
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(jsonString);
+    } catch (parseError) {
+      console.error("JSON Parse Error (plan):", parseError);
+      console.error("Raw response:", text);
+      return res.status(500).json({ error: "Invalid AI JSON response", raw: text });
+    }
+
+    const recipes = Array.isArray(payload.recipes) ? payload.recipes : [];
+    return res.json({ recipes });
+  } catch (err) {
+    return res.status(500).json({ error: "SERVER_ERROR", detail: String(err) });
+  }
+});
+
+// POST /api/ai/requests
+// Stores a meal generation parameter set into meal_generation_request table
+// Body: { userId?: string, calories?: number, protein?: number, mealType?: string, cookTime?: number, servings?: number, dietaryPreferences?: string[], allergies?: string[], favoriteCuisines?: string[] }
+router.post("/requests", async (req, res) => {
+  try {
+    const {
+      userId,
+      calories = null,
+      protein = null,
+      mealType = null,
+      cookTime = null,
+      servings = null,
+      dietaryPreferences = [],
+      allergies = [],
+      favoriteCuisines = [],
+    } = req.body || {};
+
+    // Basic shape validation
+    const payload = {
+      user_id: userId || null,
+      calories,
+      protein,
+      meal_type: mealType,
+      cook_time: cookTime,
+      servings,
+      dietary_preferences: dietaryPreferences || [],
+      allergies: allergies || [],
+      favorite_cuisines: favoriteCuisines || [],
+      created_at: new Date().toISOString()
+    };
+
+    // Try singular table name first
+    let insertRes = await supabase
+      .from("meal_generation_request")
+      .insert(payload)
+      .select()
+      .single();
+
+    // If table is missing or RLS/other error, log and try pluralized fallback table
+    if (insertRes.error) {
+      console.error("Insert into meal_generation_request failed:", insertRes.error);
+      const fallback = await supabase
+        .from("meal_generation_requests")
+        .insert(payload)
+        .select()
+        .single();
+      if (fallback.error) {
+        console.error("Insert into meal_generation_requests failed:", fallback.error);
+        return res.status(500).json({ error: fallback.error.message, details: fallback.error, payload });
+      }
+      return res.json({ request: fallback.data });
+    }
+
+    return res.json({ request: insertRes.data });
+  } catch (err) {
+    console.error("/api/ai/requests unexpected error:", err);
     return res.status(500).json({ error: "SERVER_ERROR", detail: String(err) });
   }
 });
