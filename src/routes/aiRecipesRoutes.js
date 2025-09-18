@@ -48,16 +48,16 @@ router.post("/recipes", async (req, res) => {
       return res.status(500).json({ error: "GEMINI_API_KEY not configured" });
     }
 
-    const { userId, ingredients, servings = 2 } = req.body || {};
-    if (!Array.isArray(ingredients) || ingredients.length === 0) {
-      return res.status(400).json({ error: "ingredients array required" });
+    const { userId, ingredients = [], servings = 2 } = req.body || {};
+    if (!Array.isArray(ingredients)) {
+      return res.status(400).json({ error: "ingredients must be an array" });
     }
 
     const preferences = await fetchUserPreferences(userId);
 
-    const ingredientList = ingredients
-      .map((i) => (i.name ? `${i.name} (${i.id})` : i.id))
-      .join(", ");
+    const ingredientList = ingredients.length > 0 
+      ? ingredients.map((i) => (i.name ? `${i.name} (${i.id})` : i.id)).join(", ")
+      : "No specific ingredients provided - create recipes based on preferences";
 
     const preferenceText = `Dietary: ${preferences.dietary.join(", ") || "none"}; Allergies: ${
       preferences.allergies.join(", ") || "none"
@@ -69,7 +69,9 @@ router.post("/recipes", async (req, res) => {
       generationConfig: { temperature: 0.5, maxOutputTokens: 1200 },
     });
 
-    const prompt = `You are an expert recipe generator. Create 3 recipe options that can be made primarily with the provided pantry ingredients. Strictly avoid any allergies and adhere to dietary preferences. Prefer favorite cuisines. 
+    const prompt = `You are an expert recipe generator. Create 3 recipe options ${ingredients.length > 0 
+      ? 'that can be made primarily with the provided pantry ingredients' 
+      : 'based on the user\'s dietary preferences and favorite cuisines'}. Strictly avoid any allergies and adhere to dietary preferences. Prefer favorite cuisines. 
 
 IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blocks, no explanations:
 
@@ -95,8 +97,9 @@ IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blo
 }
 
 Requirements:
-- Use productId values using the provided ingredient ids when possible.
-- If a minor staple is required (salt, oil), include but keep minimal.
+${ingredients.length > 0 
+  ? '- Use productId values using the provided ingredient ids when possible.\n- If a minor staple is required (salt, oil), include but keep minimal.'
+  : '- Create recipes using common, accessible ingredients that fit the dietary preferences.\n- Focus on the preferred cuisines and dietary restrictions.'}
 - Keep servings at ${servings} by default.
 - Ensure all ingredients and steps are realistic and consistent.
 - Return ONLY the JSON object, nothing else.
