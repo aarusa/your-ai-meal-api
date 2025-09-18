@@ -4,6 +4,7 @@ import userRoutes from "./routes/userRoutes.js"
 import chatRoutes from "./routes/chatRoutes.js"
 import productsRoutes from "./routes/productsRoutes.js"
 import aiRecipesRoutes from "./routes/aiRecipesRoutes.js"
+import mealsRoutes from "./routes/mealsRoutes.js"
 import pantryRoutes from "./routes/pantryRoutes.js"
 // import rateLimiter from "./middleware/rateLimiter.js";
 
@@ -31,6 +32,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/products", productsRoutes);
 app.use("/api/ai", aiRecipesRoutes);
+app.use("/api/meals", mealsRoutes);
 app.use("/api/pantry", pantryRoutes);
 
 // app.listen(3000, () => {

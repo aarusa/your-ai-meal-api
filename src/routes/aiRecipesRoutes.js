@@ -1,6 +1,7 @@
 import express from "express";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import supabase from "../database/supabaseClient.js";
+import { storeGeneratedMeal } from "../controllers/mealsController.js";
 
 const router = express.Router();
 
@@ -68,51 +69,109 @@ router.post("/recipes", async (req, res) => {
       generationConfig: { temperature: 0.5, maxOutputTokens: 1200 },
     });
 
-    const prompt = `You are an expert recipe generator. Create 3 recipe options that can be made primarily with the provided pantry ingredients. Strictly avoid any allergies and adhere to dietary preferences. Prefer favorite cuisines. Return valid JSON only in this TypeScript type shape:
+    const prompt = `You are an expert recipe generator. Create 3 recipe options that can be made primarily with the provided pantry ingredients. Strictly avoid any allergies and adhere to dietary preferences. Prefer favorite cuisines. 
 
-type Recipe = {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  prepTime: number;
-  cookTime: number;
-  servings: number;
-  difficulty: "Easy" | "Medium" | "Hard";
-  ingredients: { productId: string; amount: number; unit: string }[];
-  instructions: string[];
-  nutrition: { calories: number; protein: number; carbs: number; fat: number };
-  tags: string[];
-};
+IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blocks, no explanations:
+
+{
+  "recipes": [
+    {
+      "id": "recipe-1",
+      "name": "Recipe Name",
+      "description": "Brief description",
+      "category": "Breakfast/Lunch/Dinner/Snack",
+      "prepTime": 10,
+      "cookTime": 20,
+      "servings": ${servings},
+      "difficulty": "Easy",
+      "ingredients": [
+        {"productId": "ingredient-id", "amount": 1, "unit": "cup"}
+      ],
+      "instructions": ["Step 1", "Step 2"],
+      "nutrition": {"calories": 300, "protein": 20, "carbs": 30, "fat": 10},
+      "tags": ["healthy", "quick"]
+    }
+  ]
+}
 
 Requirements:
 - Use productId values using the provided ingredient ids when possible.
 - If a minor staple is required (salt, oil), include but keep minimal.
 - Keep servings at ${servings} by default.
 - Ensure all ingredients and steps are realistic and consistent.
+- Return ONLY the JSON object, nothing else.
 
 Input ingredients: ${ingredientList}
-User preferences: ${preferenceText}
-
-Respond with: { recipes: Recipe[] }`; 
+User preferences: ${preferenceText}`; 
 
     const aiResult = await model.generateContent(prompt);
     const aiResponse = await aiResult.response;
     const text = aiResponse.text();
 
-    // Try to parse JSON from response
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    const jsonString = jsonMatch ? jsonMatch[0] : text;
+    // Try to parse JSON from response - handle markdown code blocks
+    let jsonString = text;
+    
+    // Remove markdown code blocks if present
+    if (text.includes('```json')) {
+      const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+      if (jsonMatch) {
+        jsonString = jsonMatch[1].trim();
+      }
+    } else if (text.includes('```')) {
+      const jsonMatch = text.match(/```\s*([\s\S]*?)\s*```/);
+      if (jsonMatch) {
+        jsonString = jsonMatch[1].trim();
+      }
+    } else {
+      // Try to find JSON object in the response
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        jsonString = jsonMatch[0];
+      }
+    }
 
     let payload;
     try {
       payload = JSON.parse(jsonString);
-    } catch (_) {
-      return res.status(500).json({ error: "Invalid AI JSON response", raw: text });
+    } catch (parseError) {
+      console.error("JSON Parse Error:", parseError);
+      console.error("Raw response:", text);
+      console.error("Extracted JSON string:", jsonString);
+      return res.status(500).json({ 
+        error: "Invalid AI JSON response", 
+        raw: text,
+        extracted: jsonString,
+        parseError: parseError.message
+      });
     }
 
     const recipes = Array.isArray(payload.recipes) ? payload.recipes : [];
-    return res.json({ recipes });
+    
+    // Store generated meals in database if userId is provided
+    const storedMeals = [];
+    if (userId && recipes.length > 0) {
+      try {
+        for (const recipe of recipes) {
+          const storedMeal = await storeGeneratedMeal(recipe, userId);
+          storedMeals.push({
+            ...recipe,
+            id: storedMeal.id, // Use database ID
+            storedAt: storedMeal.created_at
+          });
+        }
+      } catch (storeError) {
+        console.error("Failed to store meals in database:", storeError);
+        // Return recipes even if storage fails
+        return res.json({ recipes, warning: "Meals generated but not saved to database" });
+      }
+    }
+    
+    // Return stored meals if available, otherwise return original recipes
+    const responseRecipes = storedMeals.length > 0 ? storedMeals : recipes;
+    return res.json({ 
+      recipes: responseRecipes,
+      stored: storedMeals.length > 0 
+    });
   } catch (err) {
     return res.status(500).json({ error: "SERVER_ERROR", detail: String(err) });
   }
