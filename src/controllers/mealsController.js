@@ -89,6 +89,8 @@ export async function getMeal(req, res) {
 // Store AI generated meal in database
 export async function storeGeneratedMeal(mealData, userId) {
   try {
+    const isValidUuid = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
     // Insert the main meal
     const { data: meal, error: mealError } = await supabase
       .from("ai_generated_meals")
@@ -108,6 +110,7 @@ export async function storeGeneratedMeal(mealData, userId) {
         servings: mealData.servings,
         generation_type: 'pantry_based',
         generation_criteria: {
+          // Store AI ingredients directly alongside instructions so frontend can render them
           ingredients: mealData.ingredients,
           instructions: mealData.instructions,
           tags: mealData.tags
@@ -120,26 +123,8 @@ export async function storeGeneratedMeal(mealData, userId) {
 
     if (mealError) throw mealError;
 
-    // Insert meal ingredients
-    if (mealData.ingredients && mealData.ingredients.length > 0) {
-      const ingredientInserts = mealData.ingredients.map(ingredient => ({
-        meal_id: meal.id,
-        product_id: ingredient.productId,
-        ingredient_name: ingredient.productId, // Use productId as name for now
-        quantity: ingredient.amount,
-        unit: ingredient.unit,
-        ingredient_source: 'food_database'
-      }));
-
-      const { error: ingredientsError } = await supabase
-        .from("meal_ingredients_ai")
-        .insert(ingredientInserts);
-
-      if (ingredientsError) {
-        console.warn("Failed to insert meal ingredients:", ingredientsError);
-        // Don't fail the whole operation if ingredients fail
-      }
-    }
+    // Per updated requirement: Do not create separate ingredient rows.
+    // Ingredients are stored inside generation_criteria above and displayed directly.
 
     return meal;
   } catch (err) {

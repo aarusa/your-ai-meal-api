@@ -104,7 +104,7 @@ router.post("/recipes", async (req, res) => {
       preferences.allergies.join(", ") || "none"
     }; Favorite cuisines: ${preferences.cuisines.join(", ") || "none"}`;
 
-    const prompt = `You are an expert recipe generator. Create 3 recipe options that can be made primarily with the provided pantry ingredients. Strictly avoid any allergies and adhere to dietary preferences. Prefer favorite cuisines. 
+    const prompt = `You are an expert recipe generator. Create 3 recipe options that can be made primarily with the provided pantry ingredients. Strictly avoid any allergies and adhere to dietary preferences. Prefer favorite cuisines.
 
 IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blocks, no explanations:
 
@@ -120,7 +120,7 @@ IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blo
       "servings": ${servings},
       "difficulty": "Easy",
       "ingredients": [
-        {"productId": "ingredient-id", "amount": 1, "unit": "cup"}
+        {"name": "human ingredient name (e.g. lobster, arborio rice, parmesan)", "amount": 1, "unit": "cup"}
       ],
       "instructions": ["Step 1", "Step 2"],
       "nutrition": {"calories": 300, "protein": 20, "carbs": 30, "fat": 10},
@@ -130,7 +130,8 @@ IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blo
 }
 
 Requirements:
-- Use productId values using the provided ingredient ids when possible.
+- Use human-readable ingredient names only. DO NOT include ids, codes, UUIDs, or product SKUs.
+- If a minor staple is required (salt, oil), include but keep minimal.
 - If a minor staple is required (salt, oil), include but keep minimal.
 - Keep servings at ${servings} by default.
 - Ensure all ingredients and steps are realistic and consistent.
@@ -260,7 +261,7 @@ IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blo
       "servings": ${servings},
       "difficulty": "Easy",
       "ingredients": [
-        {"productId": "ingredient-id-or-name", "amount": 1, "unit": "cup"}
+        {"name": "human ingredient name (e.g. lobster, arborio rice, parmesan)", "amount": 1, "unit": "cup"}
       ],
       "instructions": ["Step 1", "Step 2"],
       "nutrition": {"calories": 300, "protein": 20, "carbs": 30, "fat": 10},
@@ -271,7 +272,8 @@ IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blo
 
 Requirements:
 - Avoid any allergens. Respect dietary preferences. Prefer favorite cuisines.
-- Use provided pantry ingredients when relevant; otherwise propose sensible alternatives.
+- Use only human-readable ingredient names. DO NOT output any ids/UUIDs in ingredients or instructions.
+- If substituting pantry items, still keep ingredient names human.
 - Keep servings at ${servings}. ${constraints}
 - Ensure ingredients and steps are realistic and consistent.
 - Return ONLY the JSON object, nothing else.
