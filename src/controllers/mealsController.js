@@ -152,7 +152,7 @@ export async function storeGeneratedMeal(mealData, userId) {
 export async function updateMealStatus(req, res) {
   try {
     const { mealId } = req.params;
-    const { status, rating, feedback } = req.body;
+    const { status, rating, feedback, isFavorited } = req.body;
 
     if (!mealId) return res.status(400).json({ error: "mealId is required" });
     if (!status) return res.status(400).json({ error: "status is required" });
@@ -160,6 +160,7 @@ export async function updateMealStatus(req, res) {
     const updateData = { status };
     if (rating !== undefined) updateData.user_rating = rating;
     if (feedback !== undefined) updateData.user_feedback = feedback;
+    if (isFavorited !== undefined) updateData.is_favorited = isFavorited;
     if (status === 'accepted') updateData.is_rated = true;
 
     const { data: meal, error } = await supabase
