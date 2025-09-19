@@ -162,6 +162,8 @@ export async function storeType2GeneratedMeal(mealData, userId, generationCriter
           // Store the original generation parameters for Type 2
           parameters: generationCriteria
         },
+        image_url: mealData.image_url || null,
+        thumbnail_url: mealData.thumbnail_url || null,
         ai_model_version: 'deepseek-chat',
         status: 'generated'
       })
