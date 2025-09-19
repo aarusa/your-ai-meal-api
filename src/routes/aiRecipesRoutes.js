@@ -258,6 +258,161 @@ User preferences: ${preferenceText}`;
   }
 });
 
+// POST /api/ai/daily-plan
+// Generates a daily meal plan with 4 courses (breakfast, lunch, snack, dinner)
+router.post("/daily-plan", async (req, res) => {
+  try {
+    const { userId } = req.body;
+    
+    // Get user preferences
+    const preferences = await fetchUserPreferences(userId);
+    const preferenceText = [
+      preferences.dietary.length ? `Dietary: ${preferences.dietary.join(", ")}` : "",
+      preferences.allergies.length ? `Avoid: ${preferences.allergies.join(", ")}` : "",
+      preferences.cuisines.length ? `Cuisines: ${preferences.cuisines.join(", ")}` : ""
+    ].filter(Boolean).join(". ");
+
+    const prompt = `You are an expert nutritionist and chef. Generate a complete daily meal plan with 4 courses: Breakfast, Lunch, Snack, and Dinner. Each meal should be nutritionally balanced and delicious.
+
+IMPORTANT: Return ONLY valid JSON in this exact format, no markdown, no code blocks, no explanations:
+
+{
+  "dailyPlan": {
+    "date": "${new Date().toISOString().split('T')[0]}",
+    "meals": [
+      {
+        "id": "breakfast-1",
+        "name": "Recipe Name",
+        "description": "Brief description",
+        "category": "Breakfast",
+        "prepTime": 10,
+        "cookTime": 20,
+        "servings": 1,
+        "difficulty": "Easy",
+        "ingredients": [
+          {"name": "ingredient name", "amount": 1, "unit": "cup"}
+        ],
+        "instructions": ["Step 1", "Step 2"],
+        "nutrition": {"calories": 300, "protein": 20, "carbs": 30, "fat": 10},
+        "tags": ["healthy", "quick"]
+      },
+      {
+        "id": "lunch-1",
+        "name": "Recipe Name",
+        "description": "Brief description",
+        "category": "Lunch",
+        "prepTime": 15,
+        "cookTime": 25,
+        "servings": 1,
+        "difficulty": "Medium",
+        "ingredients": [
+          {"name": "ingredient name", "amount": 1, "unit": "cup"}
+        ],
+        "instructions": ["Step 1", "Step 2"],
+        "nutrition": {"calories": 450, "protein": 25, "carbs": 40, "fat": 15},
+        "tags": ["balanced", "satisfying"]
+      },
+      {
+        "id": "snack-1",
+        "name": "Recipe Name",
+        "description": "Brief description",
+        "category": "Snack",
+        "prepTime": 5,
+        "cookTime": 0,
+        "servings": 1,
+        "difficulty": "Easy",
+        "ingredients": [
+          {"name": "ingredient name", "amount": 1, "unit": "cup"}
+        ],
+        "instructions": ["Step 1", "Step 2"],
+        "nutrition": {"calories": 150, "protein": 8, "carbs": 20, "fat": 5},
+        "tags": ["light", "energizing"]
+      },
+      {
+        "id": "dinner-1",
+        "name": "Recipe Name",
+        "description": "Brief description",
+        "category": "Dinner",
+        "prepTime": 20,
+        "cookTime": 30,
+        "servings": 1,
+        "difficulty": "Medium",
+        "ingredients": [
+          {"name": "ingredient name", "amount": 1, "unit": "cup"}
+        ],
+        "instructions": ["Step 1", "Step 2"],
+        "nutrition": {"calories": 500, "protein": 30, "carbs": 35, "fat": 20},
+        "tags": ["hearty", "nutritious"]
+      }
+    ]
+  }
+}
+
+Requirements:
+- Create 4 distinct meals: Breakfast, Lunch, Snack, Dinner
+- Each meal should be nutritionally balanced for the time of day
+- Breakfast: Energizing, 300-400 calories
+- Lunch: Satisfying, 400-500 calories  
+- Snack: Light, 150-250 calories
+- Dinner: Hearty, 500-600 calories
+- Use only human-readable ingredient names
+- Ensure variety in flavors and cooking methods
+- Make instructions clear and realistic
+- Return ONLY the JSON object, nothing else
+
+User preferences: ${preferenceText}`;
+
+    const text = await generateWithOpenRouter(prompt, 0.7, 2000);
+
+    // Parse JSON from response
+    let jsonString = text;
+    if (text.includes('```json')) {
+      const m = text.match(/```json\s*([\s\S]*?)\s*```/);
+      if (m) jsonString = m[1].trim();
+    } else if (text.includes('```')) {
+      const m = text.match(/```\s*([\s\S]*?)\s*```/);
+      if (m) jsonString = m[0].trim();
+    } else {
+      const m = text.match(/\{[\s\S]*\}/);
+      if (m) jsonString = m[0];
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(jsonString);
+    } catch (parseError) {
+      console.error("JSON Parse Error (daily plan):", parseError);
+      console.error("Raw response:", text);
+      return res.status(500).json({ error: "Invalid AI JSON response", raw: text });
+    }
+
+    const meals = Array.isArray(payload.dailyPlan?.meals) ? payload.dailyPlan.meals : [];
+    
+    // Add food images using static.photos (same as Type 1 meals)
+    const mealsWithImages = meals.map((meal) => {
+      // Generate a seed based on meal name for consistent images
+      const seed = meal.name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      const foodImageUrl = `https://static.photos/food/800x600/${seed}`;
+      
+      return {
+        ...meal,
+        image_url: foodImageUrl,
+        thumbnail_url: foodImageUrl,
+        image_alt: `Image of ${meal.name}`
+      };
+    });
+    
+    return res.json({ 
+      dailyPlan: {
+        ...payload.dailyPlan,
+        meals: mealsWithImages
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: "SERVER_ERROR", detail: String(err) });
+  }
+});
+
 // POST /api/ai/plan
 // Generates meals for the Plan page. Does NOT store to DB. Ingredients are optional.
 // Body: { userId?: string, ingredients?: string[], dietaryPreferences?: string[], allergies?: string[], favoriteCuisines?: string[], calories?: number, protein?: number, mealType?: string, cookTime?: number, servings?: number }
