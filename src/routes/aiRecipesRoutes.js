@@ -1,7 +1,7 @@
 import express from "express";
 // Switched to OpenRouter (DeepSeek) for AI generation
 import supabase from "../database/supabaseClient.js";
-import { storeGeneratedMeal } from "../controllers/mealsController.js";
+import { storeGeneratedMeal, storeType2GeneratedMeal } from "../controllers/mealsController.js";
 
 const router = express.Router();
 
@@ -332,42 +332,86 @@ router.post("/requests", async (req, res) => {
     // Basic shape validation
     const payload = {
       user_id: userId || null,
-      calories,
-      protein,
+      target_calories: calories,
+      target_protein: protein,
       meal_type: mealType,
-      cook_time: cookTime,
+      cooking_time_max: cookTime,
       servings,
       dietary_preferences: dietaryPreferences || [],
       allergies: allergies || [],
-      favorite_cuisines: favoriteCuisines || [],
+      cuisine_preferences: favoriteCuisines || [],
+      request_type: 'custom_criteria',
       created_at: new Date().toISOString()
     };
 
-    // Try singular table name first
+    // Use the correct plural table name
     let insertRes = await supabase
-      .from("meal_generation_request")
+      .from("meal_generation_requests")
       .insert(payload)
       .select()
       .single();
 
-    // If table is missing or RLS/other error, log and try pluralized fallback table
+    // If there's an error, log it and return error
     if (insertRes.error) {
-      console.error("Insert into meal_generation_request failed:", insertRes.error);
-      const fallback = await supabase
-        .from("meal_generation_requests")
-        .insert(payload)
-        .select()
-        .single();
-      if (fallback.error) {
-        console.error("Insert into meal_generation_requests failed:", fallback.error);
-        return res.status(500).json({ error: fallback.error.message, details: fallback.error, payload });
-      }
-      return res.json({ request: fallback.data });
+      console.error("Insert into meal_generation_requests failed:", insertRes.error);
+      return res.status(500).json({ error: insertRes.error.message, details: insertRes.error, payload });
     }
 
     return res.json({ request: insertRes.data });
   } catch (err) {
     console.error("/api/ai/requests unexpected error:", err);
+    return res.status(500).json({ error: "SERVER_ERROR", detail: String(err) });
+  }
+});
+
+// POST /api/ai/plan/store
+// Stores Type 2 generated meals in ai_generated_meals table
+// Body: { userId: string, recipes: Array<AIRecipe>, generationCriteria: object }
+router.post("/plan/store", async (req, res) => {
+  try {
+    const { userId, recipes, generationCriteria } = req.body || {};
+    
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+    
+    if (!Array.isArray(recipes) || recipes.length === 0) {
+      return res.status(400).json({ error: "recipes array is required" });
+    }
+
+    // Store each generated meal in the database
+    const storedMeals = [];
+    for (const recipe of recipes) {
+      try {
+        const storedMeal = await storeType2GeneratedMeal(recipe, userId, generationCriteria);
+        storedMeals.push({
+          ...recipe,
+          id: storedMeal.id, // Use database ID
+          storedAt: storedMeal.created_at
+        });
+      } catch (storeError) {
+        console.error(`Failed to store meal ${recipe.name}:`, storeError);
+        // Continue storing other meals even if one fails
+      }
+    }
+
+    if (storedMeals.length === 0) {
+      return res.status(500).json({ 
+        error: "Failed to store any meals in database",
+        attempted: recipes.length,
+        stored: 0
+      });
+    }
+
+    return res.json({ 
+      recipes: storedMeals,
+      stored: true,
+      storedCount: storedMeals.length,
+      attemptedCount: recipes.length
+    });
+    
+  } catch (err) {
+    console.error("Error storing Type 2 meals:", err);
     return res.status(500).json({ error: "SERVER_ERROR", detail: String(err) });
   }
 });

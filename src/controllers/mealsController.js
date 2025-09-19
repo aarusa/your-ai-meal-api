@@ -86,7 +86,7 @@ export async function getMeal(req, res) {
   }
 }
 
-// Store AI generated meal in database
+// Store AI generated meal in database (Type 1 - Pantry based)
 export async function storeGeneratedMeal(mealData, userId) {
   try {
     const isValidUuid = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -129,6 +129,50 @@ export async function storeGeneratedMeal(mealData, userId) {
     return meal;
   } catch (err) {
     console.error("Error storing generated meal:", err);
+    throw err;
+  }
+}
+
+// Store AI generated meal in database (Type 2 - Parameter based)
+export async function storeType2GeneratedMeal(mealData, userId, generationCriteria) {
+  try {
+    // Insert the main meal
+    const { data: meal, error: mealError } = await supabase
+      .from("ai_generated_meals")
+      .insert({
+        user_id: userId,
+        name: mealData.name,
+        description: mealData.description,
+        meal_type: mealData.category.toLowerCase(),
+        total_calories: mealData.nutrition.calories,
+        total_protein: mealData.nutrition.protein,
+        total_carbs: mealData.nutrition.carbs,
+        total_fats: mealData.nutrition.fat,
+        prep_time_minutes: mealData.prepTime,
+        cook_time_minutes: mealData.cookTime,
+        total_time_minutes: mealData.prepTime + mealData.cookTime,
+        difficulty_level: mealData.difficulty.toLowerCase(),
+        servings: mealData.servings,
+        generation_type: 'parameter_based',
+        generation_criteria: {
+          // Store AI ingredients directly alongside instructions so frontend can render them
+          ingredients: mealData.ingredients,
+          instructions: mealData.instructions,
+          tags: mealData.tags,
+          // Store the original generation parameters for Type 2
+          parameters: generationCriteria
+        },
+        ai_model_version: 'deepseek-chat',
+        status: 'generated'
+      })
+      .select()
+      .single();
+
+    if (mealError) throw mealError;
+
+    return meal;
+  } catch (err) {
+    console.error("Error storing Type 2 generated meal:", err);
     throw err;
   }
 }
