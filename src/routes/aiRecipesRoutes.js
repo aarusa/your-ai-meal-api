@@ -39,50 +39,105 @@ async function fetchUserPreferences(userId) {
   };
 }
 
-// Helper: generate food image using Unsplash API
-async function generateMealImage(recipeName, description, ingredients) {
+// Helper: generate food image from local folder
+function generateLocalFoodImage(recipeName, category) {
   try {
-    const apiKey = process.env.UNSPLASH_ACCESS_KEY;
-    if (!apiKey) {
-      console.warn('UNSPLASH_ACCESS_KEY not configured, using placeholder');
-      return "/placeholder.svg";
-    }
-
-    // Create a food-focused search query
-    const searchQuery = `${recipeName} food recipe ${ingredients.slice(0, 3).join(' ')}`.trim();
+    // Map categories to image folders
+    const categoryMap = {
+      'breakfast': 'breakfast',
+      'lunch': 'lunch', 
+      'snack': 'snack',
+      'dinner': 'dinner',
+      'dessert': 'snack' // fallback to snack for dessert
+    };
     
-    const response = await fetch(
-      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(searchQuery)}&per_page=1&orientation=landscape&content_filter=high`,
-      {
-        headers: {
-          'Authorization': `Client-ID ${apiKey}`,
-          'Accept-Version': 'v1'
-        }
-      }
-    );
-
-    if (!response.ok) {
-      console.warn(`Unsplash API error: ${response.status}`);
-      return "/placeholder.svg";
-    }
-
-    const data = await response.json();
+    const imageFolder = categoryMap[category?.toLowerCase()] || 'general';
     
-    if (data.results && data.results.length > 0) {
-      const image = data.results[0];
-      return {
-        image_url: image.urls.regular,
-        thumbnail_url: image.urls.thumb,
-        alt_text: image.alt_description || `Image of ${recipeName}`,
-        photographer: image.user.name,
-        photographer_url: image.user.links.html
-      };
-    }
+    // Create a seed based on recipe name for consistency
+    const seed = recipeName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
     
-    return "/placeholder.svg";
+    // For now, we'll use a simple approach - you can expand this later
+    // with actual image file listing from the folder
+    const imageNumber = (seed % 9) + 1; // Only 9 images per category available
+    
+    const imagePath = `/food-images/${imageFolder}/food-${imageNumber}.jpg`;
+    
+    return {
+      image_url: imagePath,
+      thumbnail_url: imagePath,
+      alt_text: `Image of ${recipeName}`,
+      photographer: null,
+      photographer_url: null
+    };
   } catch (error) {
-    console.warn('Error generating meal image:', error);
-    return "/placeholder.svg";
+    console.warn('Error generating local food image:', error);
+    return {
+      image_url: "/placeholder.svg",
+      thumbnail_url: "/placeholder.svg", 
+      alt_text: `Image of ${recipeName}`,
+      photographer: null,
+      photographer_url: null
+    };
+  }
+}
+
+// Advanced helper: scan image directory and return random image
+// This can be used when you have actual image files in the folder
+function generateRandomLocalFoodImage(recipeName, category) {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    
+    // Map categories to image folders
+    const categoryMap = {
+      'breakfast': 'breakfast',
+      'lunch': 'lunch', 
+      'snack': 'snack',
+      'dinner': 'dinner',
+      'dessert': 'snack'
+    };
+    
+    const imageFolder = categoryMap[category?.toLowerCase()] || 'general';
+    const publicPath = path.join(process.cwd(), 'your-ai-meals', 'public', 'food-images', imageFolder);
+    
+    console.log(`Looking for images in: ${publicPath}`);
+    console.log(`Category: ${category}, Mapped to folder: ${imageFolder}`);
+    
+    // Check if directory exists
+    if (!fs.existsSync(publicPath)) {
+      console.warn(`Image directory not found: ${publicPath}`);
+      return generateLocalFoodImage(recipeName, category); // fallback to simple method
+    }
+    
+    // Read all image files from the directory
+    const files = fs.readdirSync(publicPath)
+      .filter(file => /\.(jpg|jpeg|png|webp)$/i.test(file))
+      .sort();
+    
+    console.log(`Found ${files.length} image files:`, files);
+    
+    if (files.length === 0) {
+      console.warn(`No image files found in: ${publicPath}`);
+      return generateLocalFoodImage(recipeName, category); // fallback to simple method
+    }
+    
+    // Create a seed based on recipe name for consistency
+    const seed = recipeName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const selectedFile = files[seed % files.length];
+    
+    const imagePath = `/food-images/${imageFolder}/${selectedFile}`;
+    console.log(`Selected image: ${selectedFile} for recipe: ${recipeName}`);
+    
+    return {
+      image_url: imagePath,
+      thumbnail_url: imagePath,
+      alt_text: `Image of ${recipeName}`,
+      photographer: null,
+      photographer_url: null
+    };
+  } catch (error) {
+    console.warn('Error generating random local food image:', error);
+    return generateLocalFoodImage(recipeName, category); // fallback to simple method
   }
 }
 
@@ -258,6 +313,81 @@ User preferences: ${preferenceText}`;
   }
 });
 
+// GET /api/ai/random-image/:category
+// Get a random image for a specific category
+router.get("/random-image/:category", async (req, res) => {
+  try {
+    const { category } = req.params;
+    const { mealName } = req.query;
+    
+    const imageData = generateRandomLocalFoodImage(mealName || 'random', category);
+    
+    res.json({
+      success: true,
+      image_url: imageData.image_url,
+      thumbnail_url: imageData.thumbnail_url,
+      alt_text: imageData.alt_text
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: "Failed to get random image"
+    });
+  }
+});
+
+// GET /api/ai/test-images
+// Test endpoint to verify local image setup
+router.get("/test-images", async (req, res) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    
+    const categories = ['breakfast', 'lunch', 'snack', 'dinner', 'general'];
+    const results = {};
+    
+    for (const category of categories) {
+      const publicPath = path.join(process.cwd(), 'your-ai-meals', 'public', 'food-images', category);
+      
+      if (fs.existsSync(publicPath)) {
+        const files = fs.readdirSync(publicPath)
+          .filter(file => /\.(jpg|jpeg|png|webp)$/i.test(file))
+          .sort();
+        results[category] = {
+          exists: true,
+          path: publicPath,
+          files: files,
+          count: files.length
+        };
+      } else {
+        results[category] = {
+          exists: false,
+          path: publicPath,
+          files: [],
+          count: 0
+        };
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: "Image directory scan completed",
+      results: results,
+      instructions: {
+        expectedPath: path.join(process.cwd(), 'your-ai-meals', 'public', 'food-images'),
+        note: "Make sure images are in the correct folder structure"
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: "Failed to scan image directories"
+    });
+  }
+});
+
 // POST /api/ai/daily-plan
 // Generates a daily meal plan with 4 courses (breakfast, lunch, snack, dinner)
 router.post("/daily-plan", async (req, res) => {
@@ -388,17 +518,17 @@ User preferences: ${preferenceText}`;
 
     const meals = Array.isArray(payload.dailyPlan?.meals) ? payload.dailyPlan.meals : [];
     
-    // Add food images using static.photos (same as Type 1 meals)
+    // Add local food images using actual files
     const mealsWithImages = meals.map((meal) => {
-      // Generate a seed based on meal name for consistent images
-      const seed = meal.name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      const foodImageUrl = `https://static.photos/food/800x600/${seed}`;
+      const imageData = generateRandomLocalFoodImage(meal.name, meal.category);
       
       return {
         ...meal,
-        image_url: foodImageUrl,
-        thumbnail_url: foodImageUrl,
-        image_alt: `Image of ${meal.name}`
+        image_url: imageData.image_url,
+        thumbnail_url: imageData.thumbnail_url,
+        image_alt: imageData.alt_text,
+        photographer: imageData.photographer,
+        photographer_url: imageData.photographer_url
       };
     });
     
@@ -509,35 +639,19 @@ User preferences: ${preferenceText}`;
 
     const recipes = Array.isArray(payload.recipes) ? payload.recipes : [];
     
-    // Generate images for each recipe
-    const recipesWithImages = await Promise.all(
-      recipes.map(async (recipe) => {
-        try {
-          const imageData = await generateMealImage(
-            recipe.name,
-            recipe.description,
-            recipe.ingredients?.map(ing => ing.name || ing.productId || 'ingredient') || []
-          );
-          
-          return {
-            ...recipe,
-            image_url: typeof imageData === 'string' ? imageData : imageData.image_url,
-            thumbnail_url: typeof imageData === 'string' ? imageData : imageData.thumbnail_url,
-            image_alt: typeof imageData === 'string' ? `Image of ${recipe.name}` : imageData.alt_text,
-            photographer: typeof imageData === 'string' ? null : imageData.photographer,
-            photographer_url: typeof imageData === 'string' ? null : imageData.photographer_url
-          };
-        } catch (error) {
-          console.warn(`Failed to generate image for ${recipe.name}:`, error);
-          return {
-            ...recipe,
-            image_url: "/placeholder.svg",
-            thumbnail_url: "/placeholder.svg",
-            image_alt: `Image of ${recipe.name}`
-          };
-        }
-      })
-    );
+    // Generate local images for each recipe using actual files
+    const recipesWithImages = recipes.map((recipe) => {
+      const imageData = generateRandomLocalFoodImage(recipe.name, recipe.category);
+      
+      return {
+        ...recipe,
+        image_url: imageData.image_url,
+        thumbnail_url: imageData.thumbnail_url,
+        image_alt: imageData.alt_text,
+        photographer: imageData.photographer,
+        photographer_url: imageData.photographer_url
+      };
+    });
     
     return res.json({ recipes: recipesWithImages });
   } catch (err) {
