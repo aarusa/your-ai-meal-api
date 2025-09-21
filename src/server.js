@@ -6,6 +6,7 @@ import productsRoutes from "./routes/productsRoutes.js"
 import aiRecipesRoutes from "./routes/aiRecipesRoutes.js"
 import mealsRoutes from "./routes/mealsRoutes.js"
 import pantryRoutes from "./routes/pantryRoutes.js"
+import simpleMealTrackingRoutes from "./routes/simpleMealTrackingRoutes.js"
 // import rateLimiter from "./middleware/rateLimiter.js";
 
 const app = express()
@@ -22,11 +23,15 @@ app.use(express.json()); // to parse the request body
 
 // Temporarily disable rate limiter during integration
 // app.use(rateLimiter)
+
 // Middleware to log the request method and url
-// app.use((req, res, next) => {
-//     console.log(`Request method is ${req.method} and the url is ${req.url}`);
-//     next();
-// });
+app.use((req, res, next) => {
+    console.log(`📡 ${req.method} ${req.url}`);
+    if (req.body && Object.keys(req.body).length > 0) {
+        console.log('📦 Request body:', req.body);
+    }
+    next();
+});
 
 app.use("/api/users", userRoutes);
 app.use("/api/chat", chatRoutes);
@@ -34,6 +39,7 @@ app.use("/api/products", productsRoutes);
 app.use("/api/ai", aiRecipesRoutes);
 app.use("/api/meals", mealsRoutes);
 app.use("/api/pantry", pantryRoutes);
+app.use("/api/meal-tracking", simpleMealTrackingRoutes);
 
 // app.listen(3000, () => {
 //     console.log("Server started on PORT: 3000");
